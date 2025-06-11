@@ -3,22 +3,43 @@ class Platformer extends Phaser.Scene {
         super("platformerScene");
     }
 
+    // GAME SETTINGS & VARIABLES
     init() {
-        // variables and settings
         this.ACCELERATION = 200;
-        this.DRAG = 450;    // DRAG < ACCELERATION = icy slide
+        this.DRAG = 700;
         this.physics.world.gravity.y = 1500;
         this.JUMP_VELOCITY = -420;
         this.PARTICLE_VELOCITY = 50;
         this.SCALE = 2.0;
         
-        // State variables for interactions
+        this.DASH_VELOCITY = 300;
+        this.DASH_DURATION = 150;
+        this.DASH_COOLDOWN = 400;
+        
+        this.WALL_JUMP_VELOCITY_X = 300;
+        this.WALL_JUMP_VELOCITY_Y = -380;
+        this.WALL_SLIDE_SPEED = 100;
+        
+        this.MAX_VELOCITY = 350;
+        
         this.playerCanMove = true;
         this.gameOverActive = false;
+        
+        this.isDashing = false;
+        this.dashStartTime = 0;
+        this.lastDashTime = 0;
+        this.dashDirection = 0;
+        this.dashStartY = 0;
+        
+        this.isWallSliding = false;
+        this.wallJumpDirection = 0;
+        this.wallJumpTime = 0;
+        this.WALL_JUMP_DURATION = 200;
     }
 
+    // SCENE CREATION
     create() {
-        // Load and create sound effects
+        // SOUND SETUP
         this.sounds = {
             jump: this.sound.add('jump', { volume: 0.3 }),
             lose: this.sound.add('lose', { volume: 0.5 }),
@@ -26,16 +47,15 @@ class Platformer extends Phaser.Scene {
             pickupCoin: this.sound.add('pickupCoin', { volume: 0.4 })
         };
 
-   
+        // BACKGROUND LAYERS
         const gameHeight = 720; 
         const bg1Scale = gameHeight / 160; 
-        this.bg1 = this.add.tileSprite(0, 0, 272 * bg1Scale * 3, gameHeight, 'bg1'); // 3 tiles wide
+        this.bg1 = this.add.tileSprite(0, 0, 272 * bg1Scale * 3, gameHeight, 'bg1');
         this.bg1.setOrigin(0, 0);
         this.bg1.setScale(bg1Scale);
         this.bg1.setScrollFactor(0.1);
         this.bg1.setDepth(-4);
 
-      
         const bg2Scale = gameHeight / 142;
         this.bg2 = this.add.tileSprite(0, 0, 213 * bg2Scale * 3, gameHeight, 'bg2'); 
         this.bg2.setOrigin(0, 0);
@@ -43,7 +63,6 @@ class Platformer extends Phaser.Scene {
         this.bg2.setScrollFactor(0.25);
         this.bg2.setDepth(-3);
 
-       
         const bg3Scale = gameHeight / 150;
         this.bg3 = this.add.tileSprite(0, 0, 272 * bg3Scale * 2.5, gameHeight, 'bg3'); 
         this.bg3.setOrigin(0, 0);
@@ -51,7 +70,6 @@ class Platformer extends Phaser.Scene {
         this.bg3.setScrollFactor(0.5);
         this.bg3.setDepth(-2);
 
-       
         const bg4Scale = gameHeight / 104; 
         this.bg4 = this.add.tileSprite(0, 0, 272 * bg4Scale * 2, gameHeight, 'bg4'); 
         this.bg4.setOrigin(0, 0);
@@ -59,8 +77,8 @@ class Platformer extends Phaser.Scene {
         this.bg4.setScrollFactor(0.75);
         this.bg4.setDepth(-1);
 
+        // TILEMAP SETUP
         this.map = this.add.tilemap("platformerlevel.", 18, 18, 160, 40);  
-      
         this.tileset = this.map.addTilesetImage("tilemap_packed", "tilemap_tiles");
         this.foregroundLayer = this.map.createLayer("foreground", this.tileset, 0, 0);
         this.foregroundLayer2 = this.map.createLayer("foreground0.5", this.tileset, 0, 0);
@@ -71,7 +89,7 @@ class Platformer extends Phaser.Scene {
             collides: true
         });
 
-        // Create water animation
+        // WATER ANIMATION
         this.anims.create({
             key: 'water',
             frames: [ 
@@ -82,7 +100,7 @@ class Platformer extends Phaser.Scene {
             repeat: -1
         });
 
-        //chest vfx
+        // PARTICLE EFFECTS
         my.vfx.chests = this.add.particles(0,0,"kenny-particles",{
             frame: ['star_01.png','star_02.png'],
             random:true,
@@ -94,7 +112,6 @@ class Platformer extends Phaser.Scene {
         });
         my.vfx.chests.stop();
         
-        //water splash
         my.vfx.water = this.add.particles(0,0,"kenny-particles",{
             frame: ['circle_01.png'],
             random:true,
@@ -108,7 +125,6 @@ class Platformer extends Phaser.Scene {
         });
         my.vfx.water.stop();
 
-        //walking dust
         my.vfx.walking = this.add.particles(0, 0, "kenny-particles", {
             frame: ['smoke_01.png','smoke_03.png','smoke_04.png'],
             random: true,
@@ -121,10 +137,22 @@ class Platformer extends Phaser.Scene {
         });
         my.vfx.walking.stop();
 
+        my.vfx.dash = this.add.particles(0, 0, "kenny-particles", {
+            frame: ['star_01.png', 'star_02.png'],
+            random: true,
+            scale: {start: 0.05, end: 0.2},
+            maxAliveParticles: 15,
+            lifespan: 300,
+            alpha: {start: 1, end: 0},
+            speed: 100,
+            tint: 0xffaa00
+        });
+        my.vfx.dash.stop();
+
+        // WATER TILES
         this.groundLayer.forEachTile(tile => {
             if (tile && tile.properties && tile.properties.water) {
                 tile.alpha = 0;
-                
                 
                 const water = this.add.sprite(tile.pixelX + 9, tile.pixelY + 9, 'tilemap_sheet');
                 water.setOrigin(0.5, 0.5);
@@ -132,7 +160,7 @@ class Platformer extends Phaser.Scene {
             }
         });
 
-        // Create chests from Objects layer in tilemap
+        // COLLECTIBLE CHESTS
         this.chests = this.map.createFromObjects("Objects", {
             name: "chests",
             key: "tilemap_sheet",
@@ -141,12 +169,12 @@ class Platformer extends Phaser.Scene {
 
         this.physics.world.enable(this.chests, Phaser.Physics.Arcade.STATIC_BODY);
 
-
         this.chestGroup = this.add.group(this.chests);
         this.waterTiles = this.groundLayer.filterTiles(tile => {
             return tile.properties.water === true;
         });
 
+        // WIN ZONE
         this.winZone = {
             x: 2835,  
             y: 474,   
@@ -154,24 +182,21 @@ class Platformer extends Phaser.Scene {
             height: 18 
         };
 
-        // set up player avatar
+        // PLAYER SETUP
         my.sprite.player = this.physics.add.sprite(30, 345, "platformer_characters", "tile_0000.png");
         
-        // Set world bounds first, then enable collision
         this.physics.world.setBounds(0, 0, this.map.widthInPixels, this.map.heightInPixels);
         my.sprite.player.setCollideWorldBounds(true);
 
-        // Enable collision handling
+        // COLLISION HANDLERS
         this.physics.add.collider(my.sprite.player, this.groundLayer);
         
-        // chest collision handler
         this.physics.add.overlap(my.sprite.player, this.chestGroup, (obj1, obj2) => {
             const chestX = obj2.x;
             const chestY = obj2.y;
 
             obj2.destroy(); 
             
-            // Play pickup sound
             this.sounds.pickupCoin.play();
             
             my.vfx.chests.setPosition(chestX,chestY);
@@ -182,24 +207,23 @@ class Platformer extends Phaser.Scene {
             });
         });
 
-        // set up Phaser-provided cursor key input
+        // INPUT SETUP
         this.cursors = this.input.keyboard.createCursorKeys();
-
         this.rKey = this.input.keyboard.addKey('R');
+        this.dashKey = this.input.keyboard.addKey('X');
 
-        // debug key listener (assigned to D key)
         this.input.keyboard.on('keydown-D', () => {
             this.physics.world.drawDebug = this.physics.world.drawDebug ? false : true;
             this.physics.world.debugGraphic.clear();
         }, this);
 
-        // Simple camera to follow player
+        // CAMERA SETUP
         this.cameras.main.setBounds(0, 0, this.map.widthInPixels, this.map.heightInPixels);
-        this.cameras.main.startFollow(my.sprite.player, true, 0.25, 0.25); // (target, [,roundPixels][,lerpX][,lerpY])
+        this.cameras.main.startFollow(my.sprite.player, true, 0.25, 0.25);
         this.cameras.main.setDeadzone(50, 50);
         this.cameras.main.setZoom(this.SCALE);
 
-        // Initialize text objects (hidden initially)
+        // UI TEXT
         this.gameOverText = this.add.text(this.cameras.main.centerX, this.cameras.main.centerY - 50, '', {
             fontSize: '32px',
             fill: '#ffffff',
@@ -217,8 +241,10 @@ class Platformer extends Phaser.Scene {
         }).setOrigin(0.5).setScrollFactor(0).setDepth(100).setVisible(false);
     }
 
+    // MAIN UPDATE LOOP
     update() {
-        // Don't process movement if player can't move
+        const currentTime = this.time.now;
+        
         if (!this.playerCanMove) {
             if (Phaser.Input.Keyboard.JustDown(this.rKey)) {
                 this.scene.restart();
@@ -226,15 +252,115 @@ class Platformer extends Phaser.Scene {
             return;
         }
 
+        this.handleDash(currentTime);
+        this.handleWallInteraction();
+        
+        if (!this.isDashing && (currentTime - this.wallJumpTime > this.WALL_JUMP_DURATION)) {
+            this.handleMovement();
+        }
+
+        this.handleJumping();
+        this.applyVelocityCap();
+        this.checkWaterCollision();
+        this.checkWinCondition();
+
+        if(Phaser.Input.Keyboard.JustDown(this.rKey)) {
+            this.scene.restart();
+        }
+    }
+
+    // VELOCITY LIMITS
+    applyVelocityCap() {
+        const currentVelX = my.sprite.player.body.velocity.x;
+        if (Math.abs(currentVelX) > this.MAX_VELOCITY) {
+            const direction = currentVelX > 0 ? 1 : -1;
+            my.sprite.player.setVelocityX(this.MAX_VELOCITY * direction);
+        }
+    }
+
+    // DASH MECHANICS
+    handleDash(currentTime) {
+        if (Phaser.Input.Keyboard.JustDown(this.dashKey) && 
+            !this.isDashing && 
+            !my.sprite.player.body.blocked.down && 
+            currentTime - this.lastDashTime > this.DASH_COOLDOWN) {
+            
+            this.startDash(currentTime);
+        }
+        
+        if (this.isDashing) {
+            my.sprite.player.setVelocityY(0);
+            my.sprite.player.body.setGravityY(0);
+            
+            if (currentTime - this.dashStartTime > this.DASH_DURATION) {
+                this.endDash();
+            }
+        }
+    }
+
+    startDash(currentTime) {
+        this.isDashing = true;
+        this.dashStartTime = currentTime;
+        this.lastDashTime = currentTime;
+        this.dashStartY = my.sprite.player.y;
+        
+        if (this.cursors.left.isDown) {
+            this.dashDirection = -1;
+        } else if (this.cursors.right.isDown) {
+            this.dashDirection = 1;
+        } else {
+            this.dashDirection = my.sprite.player.flipX ? 1 : -1;
+        }
+        
+        my.sprite.player.setVelocityX(this.DASH_VELOCITY * this.dashDirection);
+        
+        my.vfx.dash.startFollow(my.sprite.player);
+        my.vfx.dash.start();
+    }
+
+    endDash() {
+        this.isDashing = false;
+        my.sprite.player.body.setGravityY(0);
+        my.vfx.dash.stop();
+    }
+
+    // WALL INTERACTION
+    handleWallInteraction() {
+        const leftWall = this.checkWallCollision(-1);
+        const rightWall = this.checkWallCollision(1);
+        
+        this.isWallSliding = false;
+        
+        if (!my.sprite.player.body.blocked.down && (leftWall || rightWall)) {
+            if ((leftWall && this.cursors.left.isDown) || (rightWall && this.cursors.right.isDown)) {
+                this.isWallSliding = true;
+                
+                if (my.sprite.player.body.velocity.y > this.WALL_SLIDE_SPEED) {
+                    my.sprite.player.setVelocityY(this.WALL_SLIDE_SPEED);
+                }
+            }
+        }
+    }
+
+    checkWallCollision(direction) {
+        const playerTileX = this.groundLayer.worldToTileX(my.sprite.player.x);
+        const playerTileY = this.groundLayer.worldToTileY(my.sprite.player.y);
+        
+        const checkTileX = playerTileX + direction;
+        const tile = this.groundLayer.getTileAt(checkTileX, playerTileY);
+        
+        return tile && tile.properties && tile.properties.wall;
+    }
+
+    // BASIC MOVEMENT
+    handleMovement() {
         if(this.cursors.left.isDown) {
             my.sprite.player.setAccelerationX(-this.ACCELERATION);
             my.sprite.player.resetFlip();
             my.sprite.player.anims.play('walk', true);
             my.vfx.walking.startFollow(my.sprite.player, my.sprite.player.displayWidth/2-10, my.sprite.player.displayHeight/2-5, false);
-
             my.vfx.walking.setParticleSpeed(this.PARTICLE_VELOCITY, 0);
 
-           
             if (my.sprite.player.body.blocked.down) {
                 my.vfx.walking.start();
             }
@@ -244,45 +370,66 @@ class Platformer extends Phaser.Scene {
             my.sprite.player.setFlip(true, false);
             my.sprite.player.anims.play('walk', true);
             my.vfx.walking.startFollow(my.sprite.player, my.sprite.player.displayWidth/2-10, my.sprite.player.displayHeight/2-5, false);
-
             my.vfx.walking.setParticleSpeed(this.PARTICLE_VELOCITY, 0);
 
-            
             if (my.sprite.player.body.blocked.down) {
                 my.vfx.walking.start();
             }
 
         } else {
-            // Set acceleration to 0 and have DRAG take over
             my.sprite.player.setAccelerationX(0);
             my.sprite.player.setDragX(this.DRAG);
             my.sprite.player.anims.play('idle');
             my.vfx.walking.stop();
         }
+    }
 
-        // player jump
-        // note that we need body.blocked rather than body.touching b/c the former applies to tilemap tiles and the latter to the "ground"
+    // JUMPING MECHANICS
+    handleJumping() {
         if(!my.sprite.player.body.blocked.down) {
             my.sprite.player.anims.play('jump');
         }
-        if(my.sprite.player.body.blocked.down && Phaser.Input.Keyboard.JustDown(this.cursors.up)) {
-            my.sprite.player.body.setVelocityY(this.JUMP_VELOCITY);
-            // Play jump sound
-            this.sounds.jump.play();
-        }
-
-        // Check for water collision
-        this.checkWaterCollision();
         
-        // Check for win condition
-        this.checkWinCondition();
-
-        if(Phaser.Input.Keyboard.JustDown(this.rKey)) {
-            this.scene.restart();
+        if(Phaser.Input.Keyboard.JustDown(this.cursors.up)) {
+            if(my.sprite.player.body.blocked.down) {
+                my.sprite.player.body.setVelocityY(this.JUMP_VELOCITY);
+                this.sounds.jump.play();
+            }
+            else if (this.isWallSliding || this.checkWallCollision(-1) || this.checkWallCollision(1)) {
+                this.performWallJump();
+            }
         }
     }
 
-    // Function to check for water collision and create splash effects
+    performWallJump() {
+        const currentTime = this.time.now;
+        
+        const leftWall = this.checkWallCollision(-1);
+        const rightWall = this.checkWallCollision(1);
+        
+        if (leftWall) {
+            this.wallJumpDirection = 1;
+        } else if (rightWall) {
+            this.wallJumpDirection = -1;
+        } else {
+            return;
+        }
+        
+        my.sprite.player.setVelocityX(this.WALL_JUMP_VELOCITY_X * this.wallJumpDirection);
+        my.sprite.player.setVelocityY(this.WALL_JUMP_VELOCITY_Y);
+        
+        this.wallJumpTime = currentTime;
+        
+        this.sounds.jump.play();
+        
+        if (this.wallJumpDirection > 0) {
+            my.sprite.player.setFlip(true, false);
+        } else {
+            my.sprite.player.resetFlip();
+        }
+    }
+
+    // COLLISION DETECTION
     checkWaterCollision() {
         const currentTime = this.time.now;
         
@@ -290,43 +437,39 @@ class Platformer extends Phaser.Scene {
             return;
         }
         
-        // Convert player position to tile position
         const playerTileX = this.groundLayer.worldToTileX(my.sprite.player.x);
         const playerTileY = this.groundLayer.worldToTileY(my.sprite.player.y + my.sprite.player.height / 2);
         
-        // Get the tile at player's position
         const tile = this.groundLayer.getTileAt(playerTileX, playerTileY);
         
-        // Check if tile exists and has water property (even though it's invisible)
         if (tile && tile.properties && tile.properties.water) {
-            // Stop player movement immediately
             this.playerCanMove = false;
             my.sprite.player.setVelocity(0, 0);
             my.sprite.player.setAcceleration(0, 0);
             my.vfx.walking.stop();
             
-            // Create water splash effect
+            if (this.isDashing) {
+                this.endDash();
+            }
+            
             const waterX = tile.pixelX + tile.width / 2;
             const waterY = tile.pixelY;
          
             my.vfx.water.setPosition(waterX, waterY);
             my.vfx.water.start();
             
-            // Play lose sound
             this.sounds.lose.play();
             
             this.time.delayedCall(150, () => {
                 my.vfx.water.stop();
             });
             
-            // Tween player up slightly
             this.tweens.add({
                 targets: my.sprite.player,
                 y: my.sprite.player.y - 20,
                 duration: 300,
                 ease: 'Power2',
                 onComplete: () => {
-                    // Show game over text
                     this.showWaterGameOver();
                 }
             });
@@ -335,26 +478,26 @@ class Platformer extends Phaser.Scene {
         }
     }
 
-    // Function to check for win condition based on player position
     checkWinCondition() {
-        // Check if player is within the win zone
         if (my.sprite.player.x >= this.winZone.x && 
             my.sprite.player.x <= this.winZone.x + this.winZone.width &&
             my.sprite.player.y >= this.winZone.y && 
             my.sprite.player.y <= this.winZone.y + this.winZone.height) {
             
-            // Stop player movement
             this.playerCanMove = false;
             my.sprite.player.setVelocity(0, 0);
             my.sprite.player.setAcceleration(0, 0);
             my.vfx.walking.stop();
             
-            // Show win message
+            if (this.isDashing) {
+                this.endDash();
+            }
+            
             this.showWinCondition();
         }
     }
 
- 
+    // GAME STATE HANDLERS
     showWaterGameOver() {
         this.gameOverText.setText('Game Over!\n');
         this.gameOverText.setVisible(true);
@@ -363,7 +506,6 @@ class Platformer extends Phaser.Scene {
         this.gameOverActive = false; 
     }
 
-    // Show win condition UI
     showWinCondition() {
         this.sounds.win.play();  
         this.gameOverText.setText('Level Complete!\nWell Done!');
@@ -373,7 +515,6 @@ class Platformer extends Phaser.Scene {
         this.gameOverActive = true; 
     }
 
-    // Hide game over UI
     hideGameOverUI() {
         this.gameOverText.setVisible(false);
         this.restartText.setVisible(false);
