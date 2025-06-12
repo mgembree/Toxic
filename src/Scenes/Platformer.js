@@ -4,7 +4,15 @@ class Platformer extends Phaser.Scene {
     }
 
     // GAME SETTINGS & VARIABLES
-    init() {
+    init(data) {
+        // Level management - Fixed to match Load.js names
+        this.currentLevel = data.level || 1;
+        this.levelFiles = {
+            1: "toxiclevel1",
+            2: "toxiclevel2", 
+            3: "toxiclevel3"
+        };
+        
         this.ACCELERATION = 200;
         this.DRAG = 700;
         this.physics.world.gravity.y = 1500;
@@ -35,6 +43,8 @@ class Platformer extends Phaser.Scene {
         this.wallJumpDirection = 0;
         this.wallJumpTime = 0;
         this.WALL_JUMP_DURATION = 200;
+        
+        this.lastWaterSplashTime = 0; // Initialize this property
     }
 
     // SCENE CREATION
@@ -54,40 +64,125 @@ class Platformer extends Phaser.Scene {
         this.bg1.setOrigin(0, 0);
         this.bg1.setScale(bg1Scale);
         this.bg1.setScrollFactor(0.1);
-        this.bg1.setDepth(-4);
+        this.bg1.setDepth(-10);
 
         const bg2Scale = gameHeight / 142;
         this.bg2 = this.add.tileSprite(0, 0, 213 * bg2Scale * 3, gameHeight, 'bg2'); 
         this.bg2.setOrigin(0, 0);
         this.bg2.setScale(bg2Scale);
         this.bg2.setScrollFactor(0.25);
-        this.bg2.setDepth(-3);
+        this.bg2.setDepth(-8);
 
         const bg3Scale = gameHeight / 150;
         this.bg3 = this.add.tileSprite(0, 0, 272 * bg3Scale * 2.5, gameHeight, 'bg3'); 
         this.bg3.setOrigin(0, 0);
         this.bg3.setScale(bg3Scale);
         this.bg3.setScrollFactor(0.5);
-        this.bg3.setDepth(-2);
+        this.bg3.setDepth(-6);
 
         const bg4Scale = gameHeight / 104; 
         this.bg4 = this.add.tileSprite(0, 0, 272 * bg4Scale * 2, gameHeight, 'bg4'); 
         this.bg4.setOrigin(0, 0);
         this.bg4.setScale(bg4Scale);
         this.bg4.setScrollFactor(0.75);
-        this.bg4.setDepth(-1);
+        this.bg4.setDepth(-4);
 
         // TILEMAP SETUP
-        this.map = this.add.tilemap("platformerlevel.", 18, 18, 160, 40);  
-        this.tileset = this.map.addTilesetImage("tilemap_packed", "tilemap_tiles");
-        this.foregroundLayer = this.map.createLayer("foreground", this.tileset, 0, 0);
-        this.foregroundLayer2 = this.map.createLayer("foreground0.5", this.tileset, 0, 0);
+        const currentLevelFile = this.levelFiles[this.currentLevel];
+        console.log("Loading level:", currentLevelFile);
+        
+        this.map = this.add.tilemap(currentLevelFile, 18, 18, 160, 40);
+        
+        if (!this.map) {
+            console.error("Failed to load tilemap:", currentLevelFile);
+            return;
+        }
+        
+        console.log("Available layers:", this.map.layers.map(layer => layer.name));
+        console.log("Available tilesets:", this.map.tilesets.map(ts => ({ name: ts.name, image: ts.image, firstgid: ts.firstgid })));
+        
+        // Handle embedded tileset loading
+        this.tileset = null;
+        
+        if (this.map.tilesets && this.map.tilesets.length > 0) {
+            const embeddedTileset = this.map.tilesets[0];
+            console.log("Found embedded tileset:", embeddedTileset.name);
+            console.log("Embedded tileset image property:", embeddedTileset.image);
+            
+            // For embedded tilesets, we don't specify a tileset name, just the image key
+            // The tileset data is already embedded in the map
+            this.tileset = this.map.addTilesetImage(null, "tilemap_tiles");
+            
+            // If that doesn't work, try using the embedded tileset name
+            if (!this.tileset) {
+                console.log("First attempt failed, trying with tileset name...");
+                this.tileset = this.map.addTilesetImage(embeddedTileset.name, "tilemap_tiles");
+            }
+            
+            // Last resort - try different variations
+            if (!this.tileset) {
+                console.log("Second attempt failed, trying variations...");
+                // Try with the actual image filename from the embedded tileset
+                const imageFileName = embeddedTileset.image;
+                if (imageFileName) {
+                    // Remove file extension and path
+                    const imageKey = imageFileName.replace(/\.[^/.]+$/, "").replace(/^.*[\\\/]/, "");
+                    console.log("Trying with image key:", imageKey);
+                    this.tileset = this.map.addTilesetImage(imageKey, "tilemap_tiles");
+                }
+            }
+        }
+        
+        if (!this.tileset) {
+            console.error("Failed to create tileset! Available textures:", Object.keys(this.textures.list));
+            console.error("Map tilesets:", this.map.tilesets);
+            return;
+        } else {
+            console.log("Successfully created tileset:", this.tileset.name);
+            console.log("Tileset image key:", this.tileset.image ? this.tileset.image.key : "No image");
+        }
+        
+        // Try to create layers, but check if they exist first
+        this.foregroundLayer = null;
+        this.foregroundLayer2 = null;
+        this.groundLayer = null;
+        
+        if (this.map.getLayer("foreground")) {
+            this.foregroundLayer = this.map.createLayer("foreground", this.tileset, 0, 0);
+            this.foregroundLayer.setDepth(10);
+        }
+        
+        if (this.map.getLayer("foreground0.5")) {
+            this.foregroundLayer2 = this.map.createLayer("foreground0.5", this.tileset, 0, 0);
+            this.foregroundLayer2.setDepth(5);
+        }
+        
+        if (this.map.getLayer("groundnplats")) {
+            this.groundLayer = this.map.createLayer("groundnplats", this.tileset, 0, 0);
+            this.groundLayer.setDepth(0);
+            this.groundLayer.setCollisionByProperty({
+                collides: true
+            });
+            console.log("Ground layer created successfully");
+        } else {
+            console.error("Layer 'groundnplats' not found in tilemap!");
+            console.log("Available layers:", this.map.layers.map(layer => layer.name));
+        }
 
-        this.groundLayer = this.map.createLayer("groundnplats", this.tileset, 0, 0);
-
-        this.groundLayer.setCollisionByProperty({
-            collides: true
-        });
+        // DOOR DETECTION
+        this.doorTiles = [];
+        if (this.foregroundLayer2) {
+            this.foregroundLayer2.forEachTile(tile => {
+                if (tile && tile.properties && tile.properties.door) {
+                    this.doorTiles.push({
+                        x: tile.pixelX,
+                        y: tile.pixelY,
+                        width: tile.width,
+                        height: tile.height
+                    });
+                }
+            });
+        }
 
         // WATER ANIMATION
         this.anims.create({
@@ -121,7 +216,8 @@ class Platformer extends Phaser.Scene {
             gravityY: -400,
             alpha: {start: 1,end: 0},
             speed: 50,
-            angle: { min: 240, max: 300 },tint: 0x0099ff,
+            angle: { min: 240, max: 300 },
+            tint: 0x0099ff,
         });
         my.vfx.water.stop();
 
@@ -150,15 +246,17 @@ class Platformer extends Phaser.Scene {
         my.vfx.dash.stop();
 
         // WATER TILES
-        this.groundLayer.forEachTile(tile => {
-            if (tile && tile.properties && tile.properties.water) {
-                tile.alpha = 0;
-                
-                const water = this.add.sprite(tile.pixelX + 9, tile.pixelY + 9, 'tilemap_sheet');
-                water.setOrigin(0.5, 0.5);
-                water.play('water');
-            }
-        });
+        if (this.groundLayer) {
+            this.groundLayer.forEachTile(tile => {
+                if (tile && tile.properties && tile.properties.water) {
+                    tile.alpha = 0;
+                    
+                    const water = this.add.sprite(tile.pixelX + 9, tile.pixelY + 9, 'tilemap_sheet');
+                    water.setOrigin(0.5, 0.5);
+                    water.play('water');
+                }
+            });
+        }
 
         // COLLECTIBLE CHESTS
         this.chests = this.map.createFromObjects("Objects", {
@@ -168,11 +266,24 @@ class Platformer extends Phaser.Scene {
         });
 
         this.physics.world.enable(this.chests, Phaser.Physics.Arcade.STATIC_BODY);
-
         this.chestGroup = this.add.group(this.chests);
-        this.waterTiles = this.groundLayer.filterTiles(tile => {
-            return tile.properties.water === true;
+
+        // BUTTONS
+        this.buttons = this.map.createFromObjects("Objects", {
+            name: "button",
+            key: "tilemap_sheet",
+            frame: 64
         });
+
+        this.physics.world.enable(this.buttons, Phaser.Physics.Arcade.STATIC_BODY);
+        this.buttonGroup = this.add.group(this.buttons);
+        
+        // WATER TILES COLLECTION
+        if (this.groundLayer) {
+            this.waterTiles = this.groundLayer.filterTiles(tile => {
+                return tile.properties && tile.properties.water === true;
+            });
+        }
 
         // WIN ZONE
         this.winZone = {
@@ -183,13 +294,15 @@ class Platformer extends Phaser.Scene {
         };
 
         // PLAYER SETUP
-        my.sprite.player = this.physics.add.sprite(30, 345, "platformer_characters", "tile_0000.png");
+        my.sprite.player = this.physics.add.sprite(30, 50, "platformer_characters", "tile_0000.png");
         
         this.physics.world.setBounds(0, 0, this.map.widthInPixels, this.map.heightInPixels);
         my.sprite.player.setCollideWorldBounds(true);
 
         // COLLISION HANDLERS
-        this.physics.add.collider(my.sprite.player, this.groundLayer);
+        if (this.groundLayer) {
+            this.physics.add.collider(my.sprite.player, this.groundLayer);
+        }
         
         this.physics.add.overlap(my.sprite.player, this.chestGroup, (obj1, obj2) => {
             const chestX = obj2.x;
@@ -205,6 +318,11 @@ class Platformer extends Phaser.Scene {
             this.time.delayedCall(100, () => {
                 my.vfx.chests.stop();
             });
+        });
+
+        this.physics.add.overlap(my.sprite.player, this.buttonGroup, (obj1, obj2) => {
+            obj2.destroy();
+            this.activateSwitchablePlatforms();
         });
 
         // INPUT SETUP
@@ -262,6 +380,7 @@ class Platformer extends Phaser.Scene {
         this.handleJumping();
         this.applyVelocityCap();
         this.checkWaterCollision();
+        this.checkDoorCollision();
         this.checkWinCondition();
 
         if(Phaser.Input.Keyboard.JustDown(this.rKey)) {
@@ -343,6 +462,8 @@ class Platformer extends Phaser.Scene {
     }
 
     checkWallCollision(direction) {
+        if (!this.groundLayer) return false;
+        
         const playerTileX = this.groundLayer.worldToTileX(my.sprite.player.x);
         const playerTileY = this.groundLayer.worldToTileY(my.sprite.player.y);
         
@@ -431,6 +552,8 @@ class Platformer extends Phaser.Scene {
 
     // COLLISION DETECTION
     checkWaterCollision() {
+        if (!this.groundLayer) return;
+        
         const currentTime = this.time.now;
         
         if (currentTime - this.lastWaterSplashTime < 150) {
@@ -478,6 +601,19 @@ class Platformer extends Phaser.Scene {
         }
     }
 
+    checkDoorCollision() {
+        for (let door of this.doorTiles) {
+            if (my.sprite.player.x >= door.x && 
+                my.sprite.player.x <= door.x + door.width &&
+                my.sprite.player.y >= door.y && 
+                my.sprite.player.y <= door.y + door.height) {
+                
+                this.goToNextLevel();
+                break;
+            }
+        }
+    }
+
     checkWinCondition() {
         if (my.sprite.player.x >= this.winZone.x && 
             my.sprite.player.x <= this.winZone.x + this.winZone.width &&
@@ -518,5 +654,43 @@ class Platformer extends Phaser.Scene {
     hideGameOverUI() {
         this.gameOverText.setVisible(false);
         this.restartText.setVisible(false);
+    }
+
+    activateSwitchablePlatforms() {
+        if (!this.groundLayer) return;
+        
+        this.groundLayer.forEachTile(tile => {
+            if (tile && tile.properties && tile.properties.toswitch) {
+                tile.setCollision(true);
+            }
+        });
+    }
+
+    goToNextLevel() {
+        const nextLevel = this.currentLevel + 1;
+        
+        if (this.levelFiles[nextLevel]) {
+            this.scene.restart({ level: nextLevel });
+        } else {
+            this.showGameComplete();
+        }
+    }
+
+    showGameComplete() {
+        this.playerCanMove = false;
+        my.sprite.player.setVelocity(0, 0);
+        my.sprite.player.setAcceleration(0, 0);
+        my.vfx.walking.stop();
+        
+        if (this.isDashing) {
+            this.endDash();
+        }
+        
+        this.sounds.win.play();
+        this.gameOverText.setText('Game Complete!\nAll Levels Finished!');
+        this.gameOverText.setVisible(true);
+        this.restartText.setText('Press R to Play Again');
+        this.restartText.setVisible(true);
+        this.gameOverActive = true;
     }
 }
