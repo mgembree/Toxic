@@ -54,7 +54,9 @@ class Platformer extends Phaser.Scene {
             jump: this.sound.add('jump', { volume: 0.3 }),
             lose: this.sound.add('lose', { volume: 0.5 }),
             win: this.sound.add('win', { volume: 0.4 }),
-            pickupCoin: this.sound.add('pickupCoin', { volume: 0.4 })
+            pickupCoin: this.sound.add('pickupCoin', { volume: 0.4 }),
+            switch: this.sound.add('switch', { volume: 0.5 }),
+            dash: this.sound.add('dash', { volume: 0.4 })
         };
 
         // BACKGROUND LAYERS
@@ -272,7 +274,7 @@ class Platformer extends Phaser.Scene {
         this.buttons = this.map.createFromObjects("Objects", {
             name: "button",
             key: "tilemap_sheet",
-            frame: 64
+            frame: 61
         });
 
         this.physics.world.enable(this.buttons, Phaser.Physics.Arcade.STATIC_BODY);
@@ -293,7 +295,7 @@ class Platformer extends Phaser.Scene {
             height: 18 
         };
 
-        // PLAYER SETUP
+        // PLAYER SETUP - Spawn at top left ceiling to fall onto platform
         my.sprite.player = this.physics.add.sprite(30, 50, "platformer_characters", "tile_0000.png");
         
         this.physics.world.setBounds(0, 0, this.map.widthInPixels, this.map.heightInPixels);
@@ -322,6 +324,7 @@ class Platformer extends Phaser.Scene {
 
         this.physics.add.overlap(my.sprite.player, this.buttonGroup, (obj1, obj2) => {
             obj2.destroy();
+            this.sounds.switch.play();
             this.activateSwitchablePlatforms();
         });
 
@@ -433,6 +436,9 @@ class Platformer extends Phaser.Scene {
         
         my.sprite.player.setVelocityX(this.DASH_VELOCITY * this.dashDirection);
         
+        // Play dash sound effect
+        this.sounds.dash.play();
+        
         my.vfx.dash.startFollow(my.sprite.player);
         my.vfx.dash.start();
     }
@@ -443,20 +449,27 @@ class Platformer extends Phaser.Scene {
         my.vfx.dash.stop();
     }
 
-    // WALL INTERACTION
+    // WALL INTERACTION - Improved wall detection and sliding
     handleWallInteraction() {
+        if (!this.groundLayer) return;
+        
         const leftWall = this.checkWallCollision(-1);
         const rightWall = this.checkWallCollision(1);
         
         this.isWallSliding = false;
         
-        if (!my.sprite.player.body.blocked.down && (leftWall || rightWall)) {
+        // Only allow wall sliding when in the air and moving toward the wall
+        if (!my.sprite.player.body.blocked.down && my.sprite.player.body.velocity.y > 0) {
             if ((leftWall && this.cursors.left.isDown) || (rightWall && this.cursors.right.isDown)) {
                 this.isWallSliding = true;
                 
+                // Limit fall speed when wall sliding
                 if (my.sprite.player.body.velocity.y > this.WALL_SLIDE_SPEED) {
                     my.sprite.player.setVelocityY(this.WALL_SLIDE_SPEED);
                 }
+                
+                // Add some visual feedback for wall sliding
+                console.log("Wall sliding!");
             }
         }
     }
@@ -464,13 +477,35 @@ class Platformer extends Phaser.Scene {
     checkWallCollision(direction) {
         if (!this.groundLayer) return false;
         
-        const playerTileX = this.groundLayer.worldToTileX(my.sprite.player.x);
-        const playerTileY = this.groundLayer.worldToTileY(my.sprite.player.y);
+        const playerBody = my.sprite.player.body;
+        const tileSize = 18; // Your tile size
         
-        const checkTileX = playerTileX + direction;
-        const tile = this.groundLayer.getTileAt(checkTileX, playerTileY);
+        // Check multiple points along the player's side
+        const checkX = direction > 0 ? 
+            playerBody.right + (direction * 2) : // Right side + offset
+            playerBody.left + (direction * 2);   // Left side + offset
+            
+        // Check at multiple Y positions (top, middle, bottom of player)
+        const checkPoints = [
+            playerBody.top + 4,
+            playerBody.center.y,
+            playerBody.bottom - 4
+        ];
         
-        return tile && tile.properties && tile.properties.wall;
+        for (let checkY of checkPoints) {
+            const tileX = this.groundLayer.worldToTileX(checkX);
+            const tileY = this.groundLayer.worldToTileY(checkY);
+            
+            const tile = this.groundLayer.getTileAt(tileX, tileY);
+            
+            // Check if tile exists and has collision
+            if (tile && tile.index !== -1 && (tile.collides || (tile.properties && tile.properties.collides))) {
+                console.log(`Wall detected at direction ${direction}, tile:`, tile.index, "at", tileX, tileY);
+                return true;
+            }
+        }
+        
+        return false;
     }
 
     // BASIC MOVEMENT
@@ -505,19 +540,26 @@ class Platformer extends Phaser.Scene {
         }
     }
 
-    // JUMPING MECHANICS
+    // JUMPING MECHANICS - Improved wall jump detection
     handleJumping() {
         if(!my.sprite.player.body.blocked.down) {
             my.sprite.player.anims.play('jump');
         }
         
         if(Phaser.Input.Keyboard.JustDown(this.cursors.up)) {
+            // Regular ground jump
             if(my.sprite.player.body.blocked.down) {
                 my.sprite.player.body.setVelocityY(this.JUMP_VELOCITY);
                 this.sounds.jump.play();
             }
-            else if (this.isWallSliding || this.checkWallCollision(-1) || this.checkWallCollision(1)) {
-                this.performWallJump();
+            // Wall jump - check if player is against a wall
+            else {
+                const leftWall = this.checkWallCollision(-1);
+                const rightWall = this.checkWallCollision(1);
+                
+                if (leftWall || rightWall || this.isWallSliding) {
+                    this.performWallJump();
+                }
             }
         }
     }
@@ -528,21 +570,31 @@ class Platformer extends Phaser.Scene {
         const leftWall = this.checkWallCollision(-1);
         const rightWall = this.checkWallCollision(1);
         
-        if (leftWall) {
-            this.wallJumpDirection = 1;
-        } else if (rightWall) {
-            this.wallJumpDirection = -1;
+        // Determine jump direction based on which wall we're against
+        if (leftWall && !rightWall) {
+            this.wallJumpDirection = 1; // Jump right from left wall
+        } else if (rightWall && !leftWall) {
+            this.wallJumpDirection = -1; // Jump left from right wall
+        } else if (this.isWallSliding) {
+            // If we're wall sliding, jump away from the direction we're facing
+            this.wallJumpDirection = my.sprite.player.flipX ? -1 : 1;
         } else {
-            return;
+            console.log("No wall found for wall jump");
+            return; // No wall to jump from
         }
         
+        console.log("Performing wall jump in direction:", this.wallJumpDirection);
+        
+        // Apply wall jump velocities
         my.sprite.player.setVelocityX(this.WALL_JUMP_VELOCITY_X * this.wallJumpDirection);
         my.sprite.player.setVelocityY(this.WALL_JUMP_VELOCITY_Y);
         
+        // Record the time for temporary movement override
         this.wallJumpTime = currentTime;
         
         this.sounds.jump.play();
         
+        // Update sprite direction
         if (this.wallJumpDirection > 0) {
             my.sprite.player.setFlip(true, false);
         } else {

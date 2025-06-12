@@ -13,10 +13,12 @@ class Load extends Phaser.Scene {
         this.load.image('bg4', 'bg1.png');
 
         // Audio files
-        this.load.audio('jump', 'jump.wav');
-        this.load.audio('lose', 'lose.wav');
-        this.load.audio('win', 'win.wav');
-        this.load.audio('pickupCoin', 'pickupCoin.wav');
+        this.load.audio('jump', ['jump.wav']);
+        this.load.audio('lose', ['lose.wav']);
+        this.load.audio('win', ['win.wav']);
+        this.load.audio('pickupCoin', ['pickupCoin.wav']);
+        this.load.audio('switch', ['switch.wav']);
+        this.load.audio('dash', ['dash.wav']);
 
         // Load characters spritesheet
         this.load.atlas("platformer_characters", "tilemap-characters-packed.png", "tilemap-characters-packed.json");
